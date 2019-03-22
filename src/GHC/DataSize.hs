@@ -9,11 +9,16 @@
 module GHC.DataSize (
   closureSize,
   recursiveSize,
-  recursiveSizeNF
+  recursiveSizeNF,
+  getTree,
+  renderTree
   )
   where
 
 import Control.DeepSeq (NFData, force)
+
+import Data.Maybe
+import Data.Tree
 
 #if __GLASGOW_HASKELL < 708
 import Data.Word (Word)
@@ -89,3 +94,30 @@ recursiveSize x = do
 
 recursiveSizeNF :: NFData a => a -> IO Word
 recursiveSizeNF = recursiveSize . force
+
+pprintCloj :: (Word, Closure) -> String
+pprintCloj = show --(size, clo) = show size <> " | " <> (ppClosure (\_ box -> show box) 0 clo)
+
+renderTree :: a -> IO String
+renderTree x = do
+  mbTr <- getTree x
+  case mbTr of
+    Nothing -> pure ""
+    Just tr -> pure (drawTree . fmap pprintCloj $ tr)
+
+-- |
+getTree :: a -> IO (Maybe (Tree (Word, Closure)))
+getTree x = do
+  performGC
+  go [] $ asBox x
+ where
+    go :: [Box] -> Box -> IO (Maybe (Tree (Word, Closure)))
+    go !vs b@(Box y) = do
+      isElem <- liftM or $ mapM (areBoxesEqual b) vs
+      if isElem
+        then pure Nothing
+        else do
+         size    <- recursiveSize y
+         closure <- getClosureData y
+         subtrees <- mapM (go (b : vs)) (allPtrs closure)
+         pure (Just (Node (size,closure) (catMaybes subtrees)))
